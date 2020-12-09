@@ -89,7 +89,7 @@ impl GameObject {
         let right_edge = self.pos.x + (self.width / 2);
         Bounds { min_x: left_edge, max_x: right_edge, min_y: self.pos.y, max_y: self.pos.y }
     }
-    // moves the game object by the direction and returns a collision, if any
+    // moves the game object by the direction and returns a collision with the paddle or bricks
     fn move1(&mut self, direction: Direction, bounds: &Bounds, paddle_bounds: Option<&Bounds>, bricks: Option<&Vec<Bounds>>) -> Option<MoveResult> {
         let left_edge = self.pos.x - (self.width / 2);
         let right_edge = self.pos.x + (self.width / 2);
