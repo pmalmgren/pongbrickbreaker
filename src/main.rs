@@ -9,6 +9,8 @@ use std::convert::TryFrom;
 
 // Should be divisible by 3 for [left, center, right]
 const PADDLE_WIDTH: i32 = 12;
+const NUM_ROWS: i32 = 4;
+const BRICKS_PER_ROW: i32 = 6;
 
 enum Direction {
     Left,
@@ -61,7 +63,8 @@ struct Bounds {
 }
 
 enum MoveResult {
-    HitWallTopBottom,
+    HitWallBottom,
+    HitWallTop,
     HitWallLeftRight,
     HitPaddleCenter,
     HitPaddleLeft,
@@ -95,20 +98,45 @@ impl GameObject {
                 if left_edge <= 1 {
                     return Some(MoveResult::HitWallLeftRight);
                 }
-
-                self.pos.x -= 1;
-                None
+                return match bricks {
+                    None => {
+                        self.pos.x -= 1;
+                        None
+                    },
+                    Some(bricks) => {
+                        for (idx, brick_bounds) in bricks.iter().enumerate() {
+                            if self.pos.collision(brick_bounds, &self.vel) {
+                                return Some(MoveResult::HitBrickLeft(idx as i32));
+                            }
+                        }
+                        self.pos.x -= 1;
+                        None
+                    }
+                }
             },
             Direction::Right => {
                 if right_edge >= (bounds.max_x - 2) {
                     return Some(MoveResult::HitWallLeftRight)
                 }
-                self.pos.x += 1;
-                None
+                return match bricks {
+                    None => {
+                        self.pos.x += 1;
+                        None
+                    },
+                    Some(bricks) => {
+                        for (idx, brick_bounds) in bricks.iter().enumerate() {
+                            if self.pos.collision(brick_bounds, &self.vel) {
+                                return Some(MoveResult::HitBrickRight(idx as i32));
+                            }
+                        }
+                        self.pos.x += 1;
+                        None
+                    }
+                }
             },
             Direction::Up => {
                 if self.pos.y <= 1 {
-                    return Some(MoveResult::HitWallTopBottom);
+                    return Some(MoveResult::HitWallTop);
                 }
 
                 return match bricks {
@@ -129,7 +157,7 @@ impl GameObject {
             },
             Direction::Down => {
                 if self.pos.y >= (bounds.max_y - 2) {
-                    return Some(MoveResult::HitWallTopBottom)
+                    return Some(MoveResult::HitWallBottom)
                 }
 
                 let paddle_collision = match paddle_bounds {
@@ -174,8 +202,9 @@ impl GameObject {
     }
 
     // floats the game object by the velocity
-    fn float(&mut self, screen_bounds: &Bounds, paddle_bounds: &Bounds, brick_bounds: &Vec<Bounds>) -> Option<i32> {
+    fn float(&mut self, screen_bounds: &Bounds, paddle_bounds: &Bounds, brick_bounds: &Vec<Bounds>) -> Result<Option<i32>, String> {
         let mut hit_brick: Option<i32> = None;
+        let mut lost: bool = false;
         let x_collision: Option<MoveResult> = match self.vel.x {
             x if x < 0 => self.move1(Direction::Left, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
             x if x > 0 => self.move1(Direction::Right, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
@@ -200,7 +229,12 @@ impl GameObject {
                 self.vel.x = 1;
                 self.vel.y = -self.vel.y;
             },
-            Some(MoveResult::HitWallTopBottom) => self.vel.y = -self.vel.y,
+            Some(MoveResult::HitWallTop) => self.vel.y = -self.vel.y,
+            Some(MoveResult::HitWallBottom) => {
+                self.vel.x = 0;
+                self.vel.y = 0;
+                lost = true;
+            },
             Some(MoveResult::HitWallLeftRight) => self.vel.x = -self.vel.x,
             Some(MoveResult::HitBrickBottom(brick_idx)) => {
                 self.vel.y = -self.vel.y;
@@ -210,32 +244,31 @@ impl GameObject {
                 self.vel.y = -self.vel.y;
                 hit_brick = Some(brick_idx);
             },
-            Some(MoveResult::HitBrickLeft(brick_idx)) => {
-                self.vel.x = -self.vel.x;
-                hit_brick = Some(brick_idx);
-            },
-            Some(MoveResult::HitBrickRight(brick_idx)) => {
-                self.vel.x = -self.vel.x;
-                hit_brick = Some(brick_idx);
-            },
             _ => (),
             None => (),
         };
 
         match x_collision {
             Some(MoveResult::HitBrickLeft(brick_idx)) => {
-                self.vel.x = -self.vel.x;
-                hit_brick = Some(brick_idx);
+                if !hit_brick.is_some() {
+                    self.vel.x = -self.vel.x;
+                    hit_brick = Some(brick_idx);
+                }
             },
             Some(MoveResult::HitBrickRight(brick_idx)) => {
-                self.vel.y = -self.vel.x;
-                hit_brick = Some(brick_idx);
+                if !hit_brick.is_some() {
+                    self.vel.x = -self.vel.x;
+                    hit_brick = Some(brick_idx);
+                }
             },
             Some(_collision) => self.vel.x = -self.vel.x,
             None => (),
         };
 
-        return hit_brick;
+        if lost {
+            return Err("Player has lost.".to_string());
+        }
+        Ok(hit_brick)
     }
 
     fn draw(&self) {
@@ -287,17 +320,17 @@ impl Game {
         self.draw_player();
     }
 
-    fn move_ball(&mut self) -> Option<i32> {
+    fn move_ball(&mut self) -> Result<Option<i32>, String> {
         let now = now_ms();
         let bounds = self.get_brick_bounds();
         if now - self.last_ball_move > 70 {
             self.last_ball_move = now;
             self.ball.clear();
-            let hit_brick = self.ball.float(&self.bounds, &self.player.get_bounds(), &bounds);
+            let result = self.ball.float(&self.bounds, &self.player.get_bounds(), &bounds);
             self.draw_ball();
-            return hit_brick;
+            return result;
         }
-        None
+        Ok(None)
     }
 
     fn get_brick_bounds(&self) -> Vec<Bounds> {
@@ -310,7 +343,10 @@ impl Game {
     }
 
     fn rm_brick(&mut self, brick_idx: i32) {
-
+        let rm_idx = usize::try_from(brick_idx).unwrap();
+        assert!(rm_idx <= self.bricks.len());
+        self.bricks[rm_idx].clear();
+        self.bricks.remove(rm_idx);
     }
 }
 
@@ -340,7 +376,7 @@ fn init() -> Result<WINDOW, String> {
     return Ok(window);
 }
 
-fn run(game: &mut Game) {
+fn run(game: &mut Game) -> String {
     let ten_millis = time::Duration::from_millis(10);
  
     game.draw_bricks();
@@ -354,15 +390,28 @@ fn run(game: &mut Game) {
             Command::Move(direction) => {
                 game.move_player(direction);
             },
-            Command::Quit => break,
+            Command::Quit => return "Bye!".to_string(),
         };
-        let hit_brick = game.move_ball();
-        match hit_brick {
-            Some(brick_idx) => game.rm_brick(brick_idx),
-            None => (),
+        let result = game.move_ball();
+        match result {
+            Ok(hit_brick) => {
+                match hit_brick {
+                    Some(brick_idx) => game.rm_brick(brick_idx),
+                    None => (),
+                }
+            },
+            Err(_) => {
+                return "You lost :(".to_string();
+            }
+        }
+
+        if game.bricks.len() == 0 {
+            return "You won! :)".to_string();
         }
         refresh();
     }
+
+    return "Bye!".to_string();
 }
 
 fn now_ms() -> u128 {
@@ -385,20 +434,20 @@ fn main() {
     let mut max_y: i32 = 0;
     getmaxyx(window, &mut max_y, &mut max_x);
 
-    let brick_width = max_x / 8;
-    let capacity = usize::try_from(5 * 8).unwrap();
+    let brick_width = max_x / BRICKS_PER_ROW;
+    let capacity = usize::try_from((BRICKS_PER_ROW - 1) * NUM_ROWS).unwrap();
     let mut bricks = Vec::with_capacity(capacity);
-    for row in 1..6 {
+    for row in 1..NUM_ROWS+1 {
         let offset = match (row % 2) {
-            0 => 5,
-            _ => 13,
+            0 => (brick_width / 2),
+            _ => (brick_width / 2) - (brick_width / 4),
         };
-        for col in 0..7 {
+        for col in 0..(BRICKS_PER_ROW - 1) {
             bricks.push(
                 GameObject {
                     pos: Point { x: offset + (col * brick_width) + (brick_width / 2), y: row },
                     vel: Point { x: 0, y: 0 },
-                    disp_char: col.to_string().chars().nth(0).unwrap() as u32,
+                    disp_char: '#' as u32,
                     width: brick_width,
                 }
             );
@@ -425,7 +474,8 @@ fn main() {
         last_ball_move: now_ms()
     };
     
-    run(&mut game);
+    let msg = run(&mut game);
 
     endwin();
+    println!("{}", msg);
 }
