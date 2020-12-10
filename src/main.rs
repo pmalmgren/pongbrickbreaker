@@ -20,26 +20,15 @@ enum Direction {
     Still,
 }
 
-enum Command {
-    Move(Direction),
-    Quit,
-}
-
-impl Command {
-    fn from_char(c: char) -> Command {
-        match c {
-            'a' => return Command::Move(Direction::Left),
-            'd' => return Command::Move(Direction::Right),
-            'q' => return Command::Quit,
-            _ => return Command::Move(Direction::Still),
-        };
-    }
-
-    fn from_i32(i: i32) -> Command {
-        match char::from_u32(i as u32) {
-            Some(ch) => return Command::from_char(ch),
-            None => return Command::Move(Direction::Still), 
-        };
+impl Direction {
+    fn vel(&self) -> Point {
+        match self {
+            Direction::Left => Point { x: -1, y: 0 },
+            Direction::Right => Point { x: 1, y: 0 },
+            Direction::Up => Point { x: 0, y: -1 },
+            Direction::Down => Point { x: 0, y: 1 },
+            Direction::Still => Point { x: 0, y: 0 },
+        }
     }
 }
 
@@ -49,9 +38,25 @@ struct Point {
 }
 
 impl Point {
-    fn collision(&self, bounds: &Bounds, vel: &Point) -> bool {
+    fn will_collide(&self, bounds: &Bounds, direction: &Direction) -> bool {
+        let vel = direction.vel();
         // every object in our game has a height of 1
         (self.y + vel.y) == bounds.max_y && (self.x + vel.x) <= bounds.max_x && (self.x + vel.x) >= bounds.min_x
+    }
+
+    fn will_collide_with_any(&self, bounds: &Vec<Bounds>, direction: &Direction) -> Option<usize> {
+        for (idx, bound) in bounds.iter().enumerate() {
+            if self.will_collide(bound, direction) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn move_dir(&mut self, direction: &Direction) {
+        let vel = direction.vel();
+        self.x += vel.x;
+        self.y += vel.y;
     }
 }
 
@@ -63,16 +68,13 @@ struct Bounds {
 }
 
 enum MoveResult {
-    HitWallBottom,
-    HitWallTop,
-    HitWallLeftRight,
     HitPaddleCenter,
     HitPaddleLeft,
     HitPaddleRight,
-    HitBrickBottom(i32),
-    HitBrickTop(i32),
-    HitBrickLeft(i32),
-    HitBrickRight(i32),
+    HitWallLeftRight,
+    HitWallBottom,
+    HitWallTop,
+    HitBrick(Direction, usize),
 }
 
 // Can be a ball, a paddle, or a brick.
@@ -89,130 +91,78 @@ impl GameObject {
         let right_edge = self.pos.x + (self.width / 2);
         Bounds { min_x: left_edge, max_x: right_edge, min_y: self.pos.y, max_y: self.pos.y }
     }
+
+    fn do_move1(&mut self, bricks: &Vec<Bounds>, dir: Direction) -> Option<MoveResult> {
+        match self.pos.will_collide_with_any(bricks, &dir) {
+            Some(idx) => Some(MoveResult::HitBrick(dir, idx)),
+            None => {
+                self.pos.move_dir(&dir);
+                None
+            }
+        }
+    }
+
     // moves the game object by the direction and returns a collision with the paddle or bricks
-    fn move1(&mut self, direction: Direction, bounds: &Bounds, paddle_bounds: Option<&Bounds>, bricks: Option<&Vec<Bounds>>) -> Option<MoveResult> {
+    fn move1(&mut self, direction: Direction, bounds: &Bounds, paddle_bounds: &Bounds, bricks: &Vec<Bounds>) -> Option<MoveResult> {
         let left_edge = self.pos.x - (self.width / 2);
         let right_edge = self.pos.x + (self.width / 2);
+
         return match direction {
             Direction::Left => {
                 if left_edge <= 1 {
                     return Some(MoveResult::HitWallLeftRight);
                 }
-                return match bricks {
-                    None => {
-                        self.pos.x -= 1;
-                        None
-                    },
-                    Some(bricks) => {
-                        for (idx, brick_bounds) in bricks.iter().enumerate() {
-                            if self.pos.collision(brick_bounds, &self.vel) {
-                                return Some(MoveResult::HitBrickLeft(idx as i32));
-                            }
-                        }
-                        self.pos.x -= 1;
-                        None
-                    }
-                }
+
+                self.do_move1(bricks, direction)
             },
             Direction::Right => {
                 if right_edge >= (bounds.max_x - 2) {
                     return Some(MoveResult::HitWallLeftRight)
                 }
-                return match bricks {
-                    None => {
-                        self.pos.x += 1;
-                        None
-                    },
-                    Some(bricks) => {
-                        for (idx, brick_bounds) in bricks.iter().enumerate() {
-                            if self.pos.collision(brick_bounds, &self.vel) {
-                                return Some(MoveResult::HitBrickRight(idx as i32));
-                            }
-                        }
-                        self.pos.x += 1;
-                        None
-                    }
-                }
+
+                self.do_move1(bricks, direction)
             },
             Direction::Up => {
                 if self.pos.y <= 1 {
                     return Some(MoveResult::HitWallTop);
                 }
 
-                return match bricks {
-                    None => {
-                        self.pos.y -= 1;
-                        None
-                    },
-                    Some(bricks) => {
-                        for (idx, brick_bounds) in bricks.iter().enumerate() {
-                            if self.pos.collision(brick_bounds, &self.vel) {
-                                return Some(MoveResult::HitBrickBottom(idx as i32));
-                            }
-                        }
-                        self.pos.y -= 1;
-                        None
-                    }
-                }
+                self.do_move1(bricks, direction)
             },
             Direction::Down => {
                 if self.pos.y >= (bounds.max_y - 2) {
                     return Some(MoveResult::HitWallBottom)
                 }
 
-                let paddle_collision = match paddle_bounds {
-                    None => None,
-                    Some(paddle_bounds) => {
-                        if self.pos.collision(paddle_bounds, &self.vel) {
-                            let third = PADDLE_WIDTH / 3;
-                            if self.pos.x < (paddle_bounds.min_x + third) {
-                                return Some(MoveResult::HitPaddleLeft);
-                            }
-                            if self.pos.x < (paddle_bounds.min_x + (2 * third)) {
-                                return Some(MoveResult::HitPaddleCenter);
-                            }
-                            return Some(MoveResult::HitPaddleRight);
-                        }
-                        None
+                if self.pos.will_collide(paddle_bounds, &Direction::Down) {
+                    let third = PADDLE_WIDTH / 3;
+                    if self.pos.x < (paddle_bounds.min_x + third) {
+                        return Some(MoveResult::HitPaddleLeft);
                     }
-                };
-
-                if paddle_collision.is_some() {
-                    return paddle_collision;
+                    if self.pos.x < (paddle_bounds.min_x + (2 * third)) {
+                        return Some(MoveResult::HitPaddleCenter);
+                    }
+                    return Some(MoveResult::HitPaddleRight);
                 }
 
-                return match bricks {
-                    None => {
-                        self.pos.y += 1;
-                        None
-                    },
-                    Some(bricks) => {
-                        for (idx, brick_bounds) in bricks.iter().enumerate() {
-                            if self.pos.collision(brick_bounds, &self.vel) {
-                                return Some(MoveResult::HitBrickTop(idx as i32));
-                            }
-                        }
-                        self.pos.y += 1;
-                        None
-                    }
-                }
+                self.do_move1(bricks, direction)
             },
             Direction::Still => None,
         }
     }
 
     // floats the game object by the velocity
-    fn float(&mut self, screen_bounds: &Bounds, paddle_bounds: &Bounds, brick_bounds: &Vec<Bounds>) -> Result<Option<i32>, String> {
-        let mut hit_brick: Option<i32> = None;
+    fn float(&mut self, screen_bounds: &Bounds, paddle_bounds: &Bounds, brick_bounds: &Vec<Bounds>) -> Result<Option<usize>, String> {
+        let mut hit_brick: Option<usize> = None;
         let mut lost: bool = false;
         let x_collision: Option<MoveResult> = match self.vel.x {
-            x if x < 0 => self.move1(Direction::Left, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
-            x if x > 0 => self.move1(Direction::Right, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
+            x if x < 0 => self.move1(Direction::Left, screen_bounds, paddle_bounds, brick_bounds),
+            x if x > 0 => self.move1(Direction::Right, screen_bounds, paddle_bounds, brick_bounds),
             _ => None,
         };
         let y_collision: Option<MoveResult> = match self.vel.y {
-            y if y > 0 => self.move1(Direction::Down, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
-            y if y < 0 => self.move1(Direction::Up, screen_bounds, Some(paddle_bounds), Some(brick_bounds)),
+            y if y > 0 => self.move1(Direction::Down, screen_bounds, paddle_bounds, brick_bounds),
+            y if y < 0 => self.move1(Direction::Up, screen_bounds, paddle_bounds, brick_bounds),
             _ => None,
         };
 
@@ -235,32 +185,31 @@ impl GameObject {
                 self.vel.y = 0;
                 lost = true;
             },
-            Some(MoveResult::HitWallLeftRight) => self.vel.x = -self.vel.x,
-            Some(MoveResult::HitBrickBottom(brick_idx)) => {
+            Some(MoveResult::HitBrick(Direction::Down, brick_idx)) => {
                 self.vel.y = -self.vel.y;
                 hit_brick = Some(brick_idx);
             },
-            Some(MoveResult::HitBrickTop(brick_idx)) => {
+            Some(MoveResult::HitBrick(Direction::Up, brick_idx)) => {
                 self.vel.y = -self.vel.y;
                 hit_brick = Some(brick_idx);
             },
             _ => (),
-            None => (),
         };
 
         match x_collision {
-            Some(MoveResult::HitBrickLeft(brick_idx)) => {
+            Some(MoveResult::HitBrick(Direction::Left, brick_idx)) => {
                 if !hit_brick.is_some() {
                     self.vel.x = -self.vel.x;
                     hit_brick = Some(brick_idx);
                 }
             },
-            Some(MoveResult::HitBrickRight(brick_idx)) => {
+            Some(MoveResult::HitBrick(Direction::Right, brick_idx)) => {
                 if !hit_brick.is_some() {
                     self.vel.x = -self.vel.x;
                     hit_brick = Some(brick_idx);
                 }
             },
+            Some(MoveResult::HitWallLeftRight) => self.vel.x = -self.vel.x,
             Some(_collision) => self.vel.x = -self.vel.x,
             None => (),
         };
@@ -316,17 +265,17 @@ impl Game {
 
     fn move_player(&mut self, direction: Direction) {
         self.player.clear();
-        self.player.move1(direction, &self.bounds, None, None);
+        self.player.move1(direction, &self.bounds, &self.bounds, &vec![]);
         self.draw_player();
     }
 
-    fn move_ball(&mut self) -> Result<Option<i32>, String> {
+    fn move_ball(&mut self) -> Result<Option<usize>, String> {
         let now = now_ms();
-        let bounds = self.get_brick_bounds();
         if now - self.last_ball_move > 70 {
+            let brick_bounds = self.get_brick_bounds();
             self.last_ball_move = now;
             self.ball.clear();
-            let result = self.ball.float(&self.bounds, &self.player.get_bounds(), &bounds);
+            let result = self.ball.float(&self.bounds, &self.player.get_bounds(), &brick_bounds);
             self.draw_ball();
             return result;
         }
@@ -342,11 +291,33 @@ impl Game {
         brick_bounds
     }
 
-    fn rm_brick(&mut self, brick_idx: i32) {
-        let rm_idx = usize::try_from(brick_idx).unwrap();
-        assert!(rm_idx <= self.bricks.len());
-        self.bricks[rm_idx].clear();
-        self.bricks.remove(rm_idx);
+    fn rm_brick(&mut self, brick_idx: usize) {
+        assert!(brick_idx <= self.bricks.len());
+        self.bricks[brick_idx].clear();
+        self.bricks.remove(brick_idx);
+    }
+}
+
+enum Command {
+    Move(Direction),
+    Quit,
+}
+
+impl Command {
+    fn from_char(c: char) -> Command {
+        match c {
+            'a' => return Command::Move(Direction::Left),
+            'd' => return Command::Move(Direction::Right),
+            'q' => return Command::Quit,
+            _ => return Command::Move(Direction::Still),
+        };
+    }
+
+    fn from_i32(i: i32) -> Command {
+        match char::from_u32(i as u32) {
+            Some(ch) => return Command::from_char(ch),
+            None => return Command::Move(Direction::Still), 
+        };
     }
 }
 
