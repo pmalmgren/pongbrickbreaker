@@ -341,6 +341,9 @@ fn init() -> Result<WINDOW, String> {
 
     start_color();
 
+    init_pair(1, COLOR_GREEN, COLOR_BLACK);
+    wbkgdset(window, COLOR_PAIR(1));
+
     attron(A_BOLD());
     box_(window, 0, 0);
     attroff(A_BOLD());
