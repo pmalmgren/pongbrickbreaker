@@ -6,7 +6,13 @@ A console pong brick breaker game written with Rust and ncurses.
 
 ## Requirements
 
-You'll need [Rust](https://www.rust-lang.org/tools/install) and ncurses to play.
+You'll need [Rust](https://www.rust-lang.org/tools/install) and ncurses to play. Once you have those, clone this repo and use `cargo`:
+
+```
+$ git clone git@github.com:pmalmgren/pongbrickbreaker.git
+$ cd pongbrickbreaker
+$ cargo run
+```
 
 ## ncurses
 

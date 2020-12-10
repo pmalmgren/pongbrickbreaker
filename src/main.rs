@@ -60,6 +60,7 @@ impl Point {
     }
 }
 
+#[allow(dead_code)]
 struct Bounds {
     min_x: i32,
     min_y: i32,
@@ -381,8 +382,6 @@ fn run(game: &mut Game) -> String {
         }
         refresh();
     }
-
-    return "Bye!".to_string();
 }
 
 fn now_ms() -> u128 {
@@ -409,7 +408,7 @@ fn main() {
     let capacity = usize::try_from((BRICKS_PER_ROW - 1) * NUM_ROWS).unwrap();
     let mut bricks = Vec::with_capacity(capacity);
     for row in 1..NUM_ROWS+1 {
-        let offset = match (row % 2) {
+        let offset = match row % 2 {
             0 => (brick_width / 2),
             _ => (brick_width / 2) - (brick_width / 4),
         };
